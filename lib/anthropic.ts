@@ -1,24 +1,28 @@
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 
-export const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
+const nim = new OpenAI({
+  apiKey: process.env.NVIDIA_NIM_API_KEY,
+  baseURL: "https://integrate.api.nvidia.com/v1",
 });
+
+const MODEL = "moonshotai/kimi-k2-instruct";
 
 export async function runAgent(
   systemPrompt: string,
-  userMessage: string,
-  model = "claude-sonnet-4-6"
+  userMessage: string
 ): Promise<string> {
-  const response = await anthropic.messages.create({
-    model,
+  const response = await nim.chat.completions.create({
+    model: MODEL,
     max_tokens: 8096,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userMessage },
+    ],
   });
 
-  const content = response.content[0];
-  if (content.type !== "text") throw new Error("Unexpected response type");
-  return content.text;
+  const content = response.choices[0]?.message?.content;
+  if (!content) throw new Error("Empty response from Kimi K2");
+  return content;
 }
 
 export async function runAgentJSON<T>(
