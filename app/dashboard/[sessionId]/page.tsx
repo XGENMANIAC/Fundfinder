@@ -20,10 +20,33 @@ export default function DashboardPage() {
   const [expandedDraft, setExpandedDraft] = useState<number | null>(null);
 
   useEffect(() => {
+    const fromStorage = (): SessionData | null => {
+      try {
+        const cached = sessionStorage.getItem(`ff_${sessionId}`);
+        return cached ? JSON.parse(cached) : null;
+      } catch {
+        return null;
+      }
+    };
+
     fetch(`/api/session/${sessionId}`)
       .then((r) => r.json())
-      .then((d) => { setData(d); setLoading(false); })
-      .catch(() => { setError("Failed to load session"); setLoading(false); });
+      .then((d) => {
+        if (d?.profile) {
+          setData(d);
+        } else {
+          const cached = fromStorage();
+          if (cached) setData(cached);
+          else setError("Session not found");
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        const cached = fromStorage();
+        if (cached) { setData(cached); }
+        else setError("Failed to load session");
+        setLoading(false);
+      });
   }, [sessionId]);
 
   if (loading) return <Loader />;

@@ -63,29 +63,101 @@ export default function Home() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let sessionId = "";
+      let buffer = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n").filter((l) => l.startsWith("data: "));
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? ""; // keep incomplete last line
 
         for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+
+          let event: PipelineEvent & { sessionId?: string; data?: unknown };
           try {
-            const event: PipelineEvent = JSON.parse(line.replace("data: ", ""));
-            if (event.stage !== "done" && event.stage !== "error") {
-              setCurrentStage(event.stage);
-              if (event.message) setStageMessage(event.message);
-            }
-            if (event.stage === "done" && event.sessionId) {
-              sessionId = event.sessionId;
-            }
-            if (event.stage === "error") {
-              throw new Error(event.message || "Pipeline error");
-            }
+            event = JSON.parse(line.slice(6));
           } catch {
-            // skip malformed lines
+            continue; // skip malformed JSON only
+          }
+
+          if (event.stage === "error") {
+            throw new Error(event.message || "Pipeline error");
+          }
+
+          if (event.stage !== "done") {
+            setCurrentStage(event.stage);
+            if (event.message) setStageMessage(event.message);
+          }
+
+          if (event.stage === "done" && event.sessionId) {
+            sessionId = event.sessionId;
+            // Cache full result in sessionStorage so dashboard works without DB
+            if (event.data) {
+              try {
+                const d = event.data as {
+                  qualified: Array<Record<string, unknown>>;
+                  drafts: Array<Record<string, unknown>>;
+                  actionQueue: {
+                    readyToSubmit: Array<Record<string, unknown>>;
+                    needsFounderInput: Array<Record<string, unknown>>;
+                    submitted: Array<Record<string, unknown>>;
+                  };
+                };
+                const toDb = {
+                  profile: {
+                    business_name: form.businessName,
+                    name: form.name,
+                    email: form.email,
+                    location: form.location,
+                    industry: form.industry,
+                    stage: form.stage,
+                  },
+                  opportunities: d.qualified.map((o: Record<string, unknown>) => ({
+                    name: o.name,
+                    funder: o.funder,
+                    amount: o.amount,
+                    deadline: o.deadline,
+                    eligibility: o.eligibility,
+                    application_url: o.applicationUrl,
+                    source_url: o.sourceUrl,
+                    fit_score: o.fitScore,
+                    confidence: o.confidence,
+                    rationale: o.rationale,
+                    status: o.status,
+                  })),
+                  drafts: d.drafts.map((dr: Record<string, unknown>) => {
+                    const opp = dr.opportunity as Record<string, unknown>;
+                    return {
+                      opportunity_name: opp?.name,
+                      funder: opp?.funder,
+                      fields: dr.fields,
+                      free_text: dr.freeText,
+                      flagged_gaps: dr.flaggedGaps,
+                      review_status: dr.reviewStatus,
+                    };
+                  }),
+                  actions: [
+                    ...d.actionQueue.readyToSubmit,
+                    ...d.actionQueue.needsFounderInput,
+                    ...d.actionQueue.submitted,
+                  ].map((a: Record<string, unknown>) => ({
+                    opportunity_name: a.opportunityName,
+                    action_type: a.actionType,
+                    status: a.status,
+                    deadline: a.deadline,
+                    priority: a.priority,
+                    notes: a.notes,
+                    required_info: a.requiredInfo || [],
+                  })),
+                };
+                sessionStorage.setItem(`ff_${sessionId}`, JSON.stringify(toDb));
+              } catch {
+                // sessionStorage unavailable — dashboard will try DB
+              }
+            }
           }
         }
       }

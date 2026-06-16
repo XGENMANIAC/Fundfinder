@@ -12,8 +12,7 @@ export const supabaseAdmin = createClient(
   serviceKey || supabaseKey
 );
 
-export async function saveFounderProfile(profile: FounderProfile): Promise<string> {
-  const sessionId = crypto.randomUUID();
+export async function saveFounderProfile(profile: FounderProfile, sessionId: string): Promise<void> {
   const { error } = await supabaseAdmin.from("ff_founder_profiles").insert({
     session_id: sessionId,
     name: profile.name,
@@ -35,7 +34,6 @@ export async function saveFounderProfile(profile: FounderProfile): Promise<strin
     missing_fields: profile.missingFields || [],
   });
   if (error) throw error;
-  return sessionId;
 }
 
 export async function saveOpportunities(

@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import type { FounderProfile, PipelineEvent } from "@/lib/types";
+import type { FounderProfile, PipelineEvent, FundingOpportunity, ApplicationDraft, ActionItem } from "@/lib/types";
 import { runDiscoveryAgent } from "@/lib/agents/discovery";
 import { runQualificationAgent } from "@/lib/agents/qualification";
 import { runApplicationAgent } from "@/lib/agents/application";
@@ -13,7 +13,7 @@ import {
 
 export const maxDuration = 300;
 
-function encode(event: PipelineEvent): string {
+function encode(event: PipelineEvent & { sessionId?: string }): string {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
@@ -41,9 +41,12 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const profile = parseProfile(body);
 
+  // Generate sessionId upfront so it's available even if DB save fails
+  const sessionId = crypto.randomUUID();
+
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (event: PipelineEvent) =>
+      const send = (event: PipelineEvent & { sessionId?: string }) =>
         controller.enqueue(new TextEncoder().encode(encode(event)));
 
       try {
@@ -67,16 +70,20 @@ export async function POST(req: NextRequest) {
         const actionQueue = await runTrackingAgent(drafts);
         send({ stage: "tracking", status: "complete", data: actionQueue });
 
-        // ── Persist to DB ────────────────────────────────────────────────
-        const sessionId = await saveFounderProfile(profile);
-        await saveOpportunities(sessionId, qualified);
-        await saveApplicationDrafts(sessionId, drafts);
-        const allActions = [
-          ...actionQueue.readyToSubmit,
-          ...actionQueue.needsFounderInput,
-          ...actionQueue.submitted,
-        ];
-        await saveActionQueue(sessionId, allActions);
+        // ── Persist to DB (non-fatal) ────────────────────────────────────
+        try {
+          await saveFounderProfile(profile, sessionId);
+          await saveOpportunities(sessionId, qualified);
+          await saveApplicationDrafts(sessionId, drafts);
+          const allActions: ActionItem[] = [
+            ...actionQueue.readyToSubmit,
+            ...actionQueue.needsFounderInput,
+            ...actionQueue.submitted,
+          ];
+          await saveActionQueue(sessionId, allActions);
+        } catch {
+          // DB unavailable — results still delivered to client via SSE
+        }
 
         // ── Done ─────────────────────────────────────────────────────────
         send({
@@ -84,7 +91,7 @@ export async function POST(req: NextRequest) {
           status: "complete",
           sessionId,
           data: { opportunities, qualified, drafts, actionQueue },
-        } as PipelineEvent & { sessionId: string });
+        });
       } catch (err) {
         send({
           stage: "error",
