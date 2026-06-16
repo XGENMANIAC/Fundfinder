@@ -6,7 +6,7 @@ const nim = new OpenAI({
 });
 
 // Override via NIM_MODEL env var if needed
-const MODEL = process.env.NIM_MODEL || "moonshotai/kimi-k2";
+const MODEL = process.env.NIM_MODEL || "moonshotai/kimi-k2.6";
 
 export async function runAgent(
   systemPrompt: string,
