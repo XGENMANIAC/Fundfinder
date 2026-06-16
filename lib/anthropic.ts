@@ -5,23 +5,35 @@ const nim = new OpenAI({
   baseURL: "https://integrate.api.nvidia.com/v1",
 });
 
-const MODEL = "moonshotai/kimi-k2-instruct";
+// Override via NIM_MODEL env var if needed
+const MODEL = process.env.NIM_MODEL || "moonshotai/kimi-k2";
 
 export async function runAgent(
   systemPrompt: string,
   userMessage: string
 ): Promise<string> {
-  const response = await nim.chat.completions.create({
-    model: MODEL,
-    max_tokens: 8096,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
-    ],
-  });
+  let response;
+  try {
+    response = await nim.chat.completions.create({
+      model: MODEL,
+      max_tokens: 8096,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+    });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string; error?: { message?: string } };
+    const status = e?.status;
+    const msg = e?.error?.message || e?.message || String(err);
+    if (status === 401) throw new Error(`NIM API key invalid or missing. Check NVIDIA_NIM_API_KEY in .env.local`);
+    if (status === 404 || status === 410) throw new Error(`Model "${MODEL}" not found on NIM (${status}). Set NIM_MODEL= in .env.local to a different model ID.`);
+    if (status === 429) throw new Error(`NIM rate limit hit. Wait a moment and retry.`);
+    throw new Error(`NIM API error ${status ?? ""}: ${msg}`);
+  }
 
   const content = response.choices[0]?.message?.content;
-  if (!content) throw new Error("Empty response from Kimi K2");
+  if (!content) throw new Error(`Empty response from NIM model "${MODEL}"`);
   return content;
 }
 
